@@ -78,6 +78,9 @@ pub struct Options {
     /// Verify conditionals are minimally encoded.
     pub verify_minimal_if: bool,
 
+    /// Enforce the stack size limit.
+    pub enforce_stack_size_limit: bool,
+
     pub experimental: Experimental,
 }
 
@@ -88,6 +91,7 @@ impl Default for Options {
             verify_cltv: true,
             verify_csv: true,
             verify_minimal_if: true,
+            enforce_stack_size_limit: true,
             experimental: Experimental { op_cat: true },
         }
     }
@@ -989,7 +993,7 @@ impl Exec {
             _ => return Err(ExecError::BadOpcode),
         }
 
-        if self.stack.len() + self.altstack.len() > MAX_STACK_SIZE {
+        if self.opt.enforce_stack_size_limit && (self.stack.len() + self.altstack.len() > MAX_STACK_SIZE) {
             return Err(ExecError::StackSize);
         }
 
