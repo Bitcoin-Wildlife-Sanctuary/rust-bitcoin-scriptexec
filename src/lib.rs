@@ -1065,10 +1065,10 @@ pub fn convert_to_witness(script: ScriptBuf) -> Result<Vec<Vec<u8>>, Error> {
 }
 
 pub fn execute_script(script: ScriptBuf) -> ExecuteInfo {
-    execute_script_with_script(script, vec![])
+    execute_script_with_witness(script, vec![])
 }
 
-pub fn execute_script_with_script(script: ScriptBuf, witness: Vec<Vec<u8>>) -> ExecuteInfo {
+pub fn execute_script_with_witness(script: ScriptBuf, witness: Vec<Vec<u8>>) -> ExecuteInfo {
     let mut exec = Exec::new(
         ExecCtx::Tapscript,
         Options::default(),
