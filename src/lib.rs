@@ -12,6 +12,7 @@ use bitcoin::script::{self, Instruction, Instructions, Script, ScriptBuf};
 use bitcoin::sighash::SighashCache;
 use bitcoin::taproot::{self, TapLeafHash};
 use bitcoin::transaction::{self, Transaction, TxOut};
+use bitcoin::Sequence;
 
 #[cfg(feature = "serde")]
 use serde;
@@ -27,12 +28,9 @@ mod signatures;
 mod error;
 pub use error::{Error, ExecError};
 
-#[cfg(feature = "json")]
-pub mod json;
-#[cfg(feature = "wasm")]
-mod wasm;
-
 mod data_structures;
+use crate::data_structures::ScriptIntError;
+use crate::utils::read_scriptint_size;
 pub use data_structures::Stack;
 
 /// Maximum number of non-push operations per script
@@ -375,9 +373,9 @@ impl Exec {
             None => return false,
         };
 
-        let lock_time = match LockTime::from_num(sequence) {
-            Some(lt) => lt,
-            None => return false,
+        let lock_time = match LockTime::from_sequence(Sequence::from_consensus(sequence as u32)) {
+            Ok(lt) => lt,
+            Err(_) => return false,
         };
 
         match (lock_time, input_lock_time) {
@@ -1017,10 +1015,10 @@ impl Exec {
 }
 
 fn read_scriptint(item: &[u8], size: usize, minimal: bool) -> Result<i64, ExecError> {
-    script::read_scriptint_size(item, size, minimal).map_err(|e| match e {
-        script::ScriptIntError::NonMinimalPush => ExecError::MinimalData,
+    read_scriptint_size(item, size, minimal).map_err(|e| match e {
+        ScriptIntError::NonMinimalPush => ExecError::MinimalData,
         // only possible if size is 4 or lower
-        script::ScriptIntError::NumericOverflow => ExecError::ScriptIntNumericOverflow,
+        ScriptIntError::NumericOverflow => ExecError::ScriptIntNumericOverflow,
     })
 }
 
