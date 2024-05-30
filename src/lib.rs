@@ -6,11 +6,13 @@ use core::cmp;
 
 use bitcoin::consensus::Encodable;
 use bitcoin::hashes::{hash160, ripemd160, sha1, sha256, sha256d, Hash};
+use bitcoin::hex::DisplayHex;
 use bitcoin::opcodes::{all::*, Opcode};
 use bitcoin::script::{self, Instruction, Instructions, Script, ScriptBuf};
 use bitcoin::sighash::SighashCache;
 use bitcoin::taproot::{self, TapLeafHash};
 use bitcoin::transaction::{self, Transaction, TxOut};
+use bitcoin::Sequence;
 
 #[cfg(feature = "serde")]
 use serde;
@@ -18,7 +20,7 @@ use serde;
 #[macro_use]
 mod macros;
 
-mod utils;
+pub mod utils;
 use utils::ConditionStack;
 
 mod signatures;
@@ -26,12 +28,9 @@ mod signatures;
 mod error;
 pub use error::{Error, ExecError};
 
-#[cfg(feature = "json")]
-pub mod json;
-#[cfg(feature = "wasm")]
-mod wasm;
-
 mod data_structures;
+use crate::data_structures::ScriptIntError;
+use crate::utils::read_scriptint_size;
 pub use data_structures::Stack;
 
 /// Maximum number of non-push operations per script
@@ -90,7 +89,7 @@ impl Default for Options {
             verify_cltv: true,
             verify_csv: true,
             verify_minimal_if: true,
-			enforce_stack_limit: true,
+            enforce_stack_limit: true,
             experimental: Experimental { op_cat: true },
         }
     }
@@ -373,9 +372,9 @@ impl Exec {
             None => return false,
         };
 
-        let lock_time = match LockTime::from_num(sequence) {
-            Some(lt) => lt,
-            None => return false,
+        let lock_time = match LockTime::from_sequence(Sequence::from_consensus(sequence as u32)) {
+            Ok(lt) => lt,
+            Err(_) => return false,
         };
 
         match (lock_time, input_lock_time) {
@@ -1013,9 +1012,164 @@ impl Exec {
 }
 
 fn read_scriptint(item: &[u8], size: usize, minimal: bool) -> Result<i64, ExecError> {
-    script::read_scriptint_size(item, size, minimal).map_err(|e| match e {
-        script::ScriptIntError::NonMinimalPush => ExecError::MinimalData,
+    read_scriptint_size(item, size, minimal).map_err(|e| match e {
+        ScriptIntError::NonMinimalPush => ExecError::MinimalData,
         // only possible if size is 4 or lower
-        script::ScriptIntError::NumericOverflow => ExecError::ScriptIntNumericOverflow,
+        ScriptIntError::NumericOverflow => ExecError::ScriptIntNumericOverflow,
     })
+}
+
+pub fn convert_to_witness(script: ScriptBuf) -> Result<Vec<Vec<u8>>, Error> {
+    let script = Box::leak(script.into_boxed_script()) as &'static Script;
+    let instructions = script.instructions_minimal();
+    let mut stack = vec![];
+
+    for instruction in instructions {
+        if instruction.is_err() {
+            return Err(Error::InvalidScript(instruction.unwrap_err()));
+        }
+        let instruction = instruction.unwrap();
+
+        match instruction {
+            Instruction::PushBytes(p) => {
+                stack.push(p.as_bytes().to_vec());
+            }
+            Instruction::Op(op) => {
+                match op {
+                    // Push value
+                    OP_PUSHNUM_NEG1 => {
+                        stack.push(vec![0x81]);
+                    }
+
+                    OP_PUSHNUM_1 | OP_PUSHNUM_2 | OP_PUSHNUM_3 | OP_PUSHNUM_4
+                    | OP_PUSHNUM_5 | OP_PUSHNUM_6 | OP_PUSHNUM_7 | OP_PUSHNUM_8 | OP_PUSHNUM_9
+                    | OP_PUSHNUM_10 | OP_PUSHNUM_11 | OP_PUSHNUM_12 | OP_PUSHNUM_13 | OP_PUSHNUM_14
+                    | OP_PUSHNUM_15 | OP_PUSHNUM_16 => {
+                        let n = op.to_u8() - (OP_PUSHNUM_1.to_u8() - 1);
+                        stack.push(vec![n]);
+                    }
+
+                    // remainder
+                    _ => return Err(Error::Other("the initial input to the witness elements can only contain elements, but not any opcode.")),
+                }
+            }
+        }
+    }
+
+    Ok(stack)
+}
+
+pub fn execute_script(script: ScriptBuf) -> ExecuteInfo {
+    execute_script_with_witness(script, vec![])
+}
+
+pub fn execute_script_with_witness(script: ScriptBuf, witness: Vec<Vec<u8>>) -> ExecuteInfo {
+    let mut exec = Exec::new(
+        ExecCtx::Tapscript,
+        Options::default(),
+        TxTemplate {
+            tx: Transaction {
+                version: bitcoin::transaction::Version::TWO,
+                lock_time: bitcoin::locktime::absolute::LockTime::ZERO,
+                input: vec![],
+                output: vec![],
+            },
+            prevouts: vec![],
+            input_idx: 0,
+            taproot_annex_scriptleaf: Some((TapLeafHash::all_zeros(), None)),
+        },
+        script,
+        witness,
+    )
+    .expect("error creating exec");
+
+    loop {
+        if exec.exec_next().is_err() {
+            break;
+        }
+    }
+    let res = exec.result().unwrap();
+    ExecuteInfo {
+        success: res.success,
+        error: res.error.clone(),
+        last_opcode: res.opcode,
+        final_stack: FmtStack(exec.stack().clone()),
+        remaining_script: exec.remaining_script().to_asm_string(),
+        stats: exec.stats().clone(),
+    }
+}
+
+#[derive(Debug)]
+pub struct ExecuteInfo {
+    pub success: bool,
+    pub error: Option<ExecError>,
+    pub final_stack: FmtStack,
+    pub remaining_script: String,
+    pub last_opcode: Option<Opcode>,
+    pub stats: ExecStats,
+}
+
+impl std::fmt::Display for ExecuteInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.success {
+            writeln!(f, "Script execution successful.")?;
+        } else {
+            writeln!(f, "Script execution failed!")?;
+        }
+        if let Some(ref error) = self.error {
+            writeln!(f, "Error: {:?}", error)?;
+        }
+        if self.remaining_script.len() > 0 {
+            writeln!(f, "Remaining Script: {}", self.remaining_script)?;
+        }
+        if self.final_stack.len() > 0 {
+            match f.width() {
+                None => writeln!(f, "Final Stack: {:4}", self.final_stack)?,
+                Some(width) => {
+                    writeln!(f, "Final Stack: {:width$}", self.final_stack, width = width)?
+                }
+            }
+        }
+        if let Some(ref opcode) = self.last_opcode {
+            writeln!(f, "Last Opcode: {:?}", opcode)?;
+        }
+        writeln!(f, "Stats: {:?}", self.stats)?;
+        Ok(())
+    }
+}
+
+/// A wrapper for the stack types to print them better.
+pub struct FmtStack(pub Stack);
+impl std::fmt::Display for FmtStack {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let mut iter = self.0.iter_str().enumerate().peekable();
+        write!(f, "\n0:\t\t ")?;
+        while let Some((index, item)) = iter.next() {
+            write!(f, "0x{:8}", item.as_hex())?;
+            if iter.peek().is_some() {
+                if (index + 1) % f.width().unwrap() == 0 {
+                    write!(f, "\n{}:\t\t", index + 1)?;
+                }
+                write!(f, " ")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl FmtStack {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn get(&self, index: usize) -> Vec<u8> {
+        self.0.get(index)
+    }
+}
+
+impl std::fmt::Debug for FmtStack {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self)?;
+        Ok(())
+    }
 }

@@ -1,6 +1,6 @@
+use crate::utils::scriptint_vec;
 use crate::{read_scriptint, ExecError};
 use alloc::rc::Rc;
-use bitcoin::script;
 use core::cell::RefCell;
 use core::cmp::PartialEq;
 use core::slice::Iter;
@@ -48,7 +48,7 @@ impl Stack {
     pub fn topstr(&self, offset: isize) -> Result<Vec<u8>, ExecError> {
         let entry = self.top(offset)?;
         match entry {
-            StackEntry::Num(v) => Ok(script::scriptint_vec(*v)),
+            StackEntry::Num(v) => Ok(scriptint_vec(*v)),
             StackEntry::StrRef(v) => Ok(v.borrow().to_vec()),
         }
     }
@@ -102,7 +102,7 @@ impl Stack {
     pub fn popstr(&mut self) -> Result<Vec<u8>, ExecError> {
         let entry = self.0.pop().ok_or(ExecError::InvalidStackOperation)?;
         match entry {
-            StackEntry::Num(v) => Ok(script::scriptint_vec(v)),
+            StackEntry::Num(v) => Ok(scriptint_vec(v)),
             StackEntry::StrRef(v) => Ok(v.borrow().to_vec()),
         }
     }
@@ -131,14 +131,14 @@ impl Stack {
 
     pub fn iter_str(&self) -> Map<Iter<StackEntry>, fn(&StackEntry) -> Vec<u8>> {
         self.0.iter().map(|v| match v {
-            StackEntry::Num(v) => script::scriptint_vec(*v),
+            StackEntry::Num(v) => scriptint_vec(*v),
             StackEntry::StrRef(v) => v.borrow().to_vec(),
         })
     }
 
     pub fn get(&self, index: usize) -> Vec<u8> {
         match &self.0[index] {
-            StackEntry::Num(v) => script::scriptint_vec(*v),
+            StackEntry::Num(v) => scriptint_vec(*v),
             StackEntry::StrRef(v) => v.borrow().to_vec(),
         }
     }
@@ -147,5 +147,39 @@ impl Stack {
 impl Default for Stack {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Ways parsing script integers might fail.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScriptIntError {
+    /// Something did a non-minimal push; for more information see
+    /// <https://github.com/bitcoin/bips/blob/master/bip-0062.mediawiki#push-operators>
+    NonMinimalPush,
+    /// Tried to read an array off the stack as a number when it was more than 4 bytes.
+    NumericOverflow,
+}
+
+impl std::fmt::Display for ScriptIntError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        use ScriptIntError::*;
+
+        match *self {
+            NonMinimalPush => f.write_str("non-minimal datapush"),
+            NumericOverflow => {
+                f.write_str("numeric overflow (number on stack larger than 4 bytes)")
+            }
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for ScriptIntError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        use ScriptIntError::*;
+
+        match *self {
+            NonMinimalPush | NumericOverflow => None,
+        }
     }
 }
