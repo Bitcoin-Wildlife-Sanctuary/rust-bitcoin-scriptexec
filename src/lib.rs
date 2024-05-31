@@ -63,6 +63,12 @@ const _MAX_PUBKEYS_PER_MULTISIG: i64 = 20;
 pub struct Experimental {
     /// Enable an experimental implementation of OP_CAT.
     pub op_cat: bool,
+
+    /// Enable OP_MUL.
+    pub op_mul: bool,
+
+    /// Enable OP_DIV.
+    pub op_div: bool,
 }
 
 /// Used to fine-tune different variables during execution.
@@ -90,7 +96,28 @@ impl Default for Options {
             verify_csv: true,
             verify_minimal_if: true,
             enforce_stack_limit: true,
-            experimental: Experimental { op_cat: true },
+            experimental: Experimental {
+                op_cat: true,
+                op_mul: false,
+                op_div: false,
+            },
+        }
+    }
+}
+
+impl Options {
+    pub fn default_with_mul_div() -> Self {
+        Options {
+            require_minimal: true,
+            verify_cltv: true,
+            verify_csv: true,
+            verify_minimal_if: true,
+            enforce_stack_limit: true,
+            experimental: Experimental {
+                op_cat: true,
+                op_mul: true,
+                op_div: true,
+            },
         }
     }
 }
@@ -491,8 +518,14 @@ impl Exec {
                     OP_CAT if !self.opt.experimental.op_cat || self.ctx != ExecCtx::Tapscript => {
                         return self.failop(ExecError::DisabledOpcode, op);
                     }
+                    OP_MUL if !self.opt.experimental.op_mul || self.ctx != ExecCtx::Tapscript => {
+                        return self.failop(ExecError::DisabledOpcode, op);
+                    }
+                    OP_DIV if !self.opt.experimental.op_div || self.ctx != ExecCtx::Tapscript => {
+                        return self.failop(ExecError::DisabledOpcode, op);
+                    }
                     OP_SUBSTR | OP_LEFT | OP_RIGHT | OP_INVERT | OP_AND | OP_OR | OP_XOR
-                    | OP_2MUL | OP_2DIV | OP_MUL | OP_DIV | OP_MOD | OP_LSHIFT | OP_RSHIFT => {
+                    | OP_2MUL | OP_2DIV | OP_MOD | OP_LSHIFT | OP_RSHIFT => {
                         return self.failop(ExecError::DisabledOpcode, op);
                     }
                     OP_RESERVED => {
@@ -905,6 +938,32 @@ impl Exec {
                 if op != OP_NUMEQUALVERIFY {
                     self.stack.pushnum(res);
                 }
+            }
+
+            OP_MUL if self.opt.experimental.op_mul && self.ctx == ExecCtx::Tapscript => {
+                // (x1 x2 -- out)
+                let x1 = self.stack.topnum(-2, self.opt.require_minimal)?;
+                let x2 = self.stack.topnum(-1, self.opt.require_minimal)?;
+
+                self.stack.popn(2).unwrap();
+
+                let res = x1 * x2;
+                self.stack.pushnum(res);
+            }
+
+            OP_DIV if self.opt.experimental.op_div && self.ctx == ExecCtx::Tapscript => {
+                // (x1 x2 -- out)
+                let x1 = self.stack.topnum(-2, self.opt.require_minimal)?;
+                let x2 = self.stack.topnum(-1, self.opt.require_minimal)?;
+
+                if x2 == 0 {
+                    return Err(ExecError::DivByZero);
+                }
+
+                self.stack.popn(2).unwrap();
+
+                let res = x1 / x2;
+                self.stack.pushnum(res);
             }
 
             OP_WITHIN => {
