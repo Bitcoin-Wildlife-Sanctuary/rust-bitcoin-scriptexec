@@ -15,3 +15,6 @@ lazy_static = "1.4.0"
 
 # I think we need to mention this for secp256k1-sys to work
 getrandom = { version = "0.2", optional = true }
+
+[features]
+debug = []

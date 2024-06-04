@@ -1148,14 +1148,75 @@ pub fn execute_script_with_witness(script: ScriptBuf, witness: Vec<Vec<u8>>) -> 
         }
     }
     let res = exec.result().unwrap();
-    ExecuteInfo {
+
+    let info =  ExecuteInfo {
         success: res.success,
         error: res.error.clone(),
         last_opcode: res.opcode,
         final_stack: FmtStack(exec.stack().clone()),
         remaining_script: exec.remaining_script().to_asm_string(),
         stats: exec.stats().clone(),
+    };
+
+    #[cfg(feature = "debug")]
+    {
+        if !res.success {
+            println!("{:8}", info.final_stack);
+            println!("{:?}", info.error);
+        }
     }
+
+    info
+}
+
+pub fn execute_script_with_witness_unlimited_stack(script: ScriptBuf, witness: Vec<Vec<u8>>) -> crate::ExecuteInfo {
+    let mut opts = Options::default();
+    opts.enforce_stack_limit = false;
+
+    let mut exec = Exec::new(
+        ExecCtx::Tapscript,
+        opts,
+        TxTemplate {
+            tx: Transaction {
+                version: bitcoin::transaction::Version::TWO,
+                lock_time: bitcoin::locktime::absolute::LockTime::ZERO,
+                input: vec![],
+                output: vec![],
+            },
+            prevouts: vec![],
+            input_idx: 0,
+            taproot_annex_scriptleaf: Some((TapLeafHash::all_zeros(), None)),
+        },
+        script,
+        witness,
+    )
+        .expect("error creating exec");
+
+    loop {
+        if exec.exec_next().is_err() {
+            break;
+        }
+    }
+    let res = exec.result().unwrap();
+
+    let info =  ExecuteInfo {
+        success: res.success,
+        error: res.error.clone(),
+        last_opcode: res.opcode,
+        final_stack: FmtStack(exec.stack().clone()),
+        remaining_script: exec.remaining_script().to_asm_string(),
+        stats: exec.stats().clone(),
+    };
+
+    #[cfg(feature = "debug")]
+    {
+        if !res.success {
+            println!("{:8}", info.final_stack);
+            println!("{:?}", info.error);
+        }
+    }
+
+    info
 }
 
 #[derive(Debug)]
