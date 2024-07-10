@@ -23,15 +23,21 @@ pub struct ConditionStack {
     first_false_pos: usize,
 }
 
+impl Default for ConditionStack {
+    fn default() -> Self {
+        Self {
+            size: 0,
+            first_false_pos: Self::NO_FALSE,
+        }
+    }
+}
+
 impl ConditionStack {
     /// A constant for first_false_pos to indicate there are no falses.
     const NO_FALSE: usize = usize::MAX;
 
     pub fn new() -> Self {
-        Self {
-            size: 0,
-            first_false_pos: Self::NO_FALSE,
-        }
+        Self::default()
     }
 
     pub fn all_true(&self) -> bool {

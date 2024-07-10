@@ -3,8 +3,6 @@ use crate::{read_scriptint, ExecError};
 use alloc::rc::Rc;
 use core::cell::RefCell;
 use core::cmp::PartialEq;
-use core::slice::Iter;
-use std::iter::Map;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StackEntry {
@@ -13,7 +11,7 @@ pub enum StackEntry {
 }
 
 #[derive(Clone, Eq, Debug, PartialEq)]
-pub struct Stack(Vec<StackEntry>);
+pub struct Stack(pub(crate) Vec<StackEntry>);
 
 impl Stack {
     pub fn new() -> Self {
@@ -40,8 +38,8 @@ impl Stack {
         debug_assert!(offset < 0, "offsets should be < 0");
         self.0
             .len()
-            .checked_sub(offset.abs() as usize)
-            .and_then(|i| Some(&self.0[i]))
+            .checked_sub(offset.unsigned_abs())
+            .map(|i| &self.0[i])
             .ok_or(ExecError::InvalidStackOperation)
     }
 
@@ -127,13 +125,6 @@ impl Stack {
 
     pub fn remove(&mut self, v: usize) {
         self.0.remove(v);
-    }
-
-    pub fn iter_str(&self) -> Map<Iter<StackEntry>, fn(&StackEntry) -> Vec<u8>> {
-        self.0.iter().map(|v| match v {
-            StackEntry::Num(v) => scriptint_vec(*v),
-            StackEntry::StrRef(v) => v.borrow().to_vec(),
-        })
     }
 
     pub fn get(&self, index: usize) -> Vec<u8> {

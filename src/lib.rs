@@ -29,8 +29,8 @@ mod error;
 pub use error::{Error, ExecError};
 
 mod data_structures;
-use crate::data_structures::ScriptIntError;
-use crate::utils::read_scriptint_size;
+use crate::data_structures::{ScriptIntError, StackEntry};
+use crate::utils::{read_scriptint_size, scriptint_vec};
 pub use data_structures::Stack;
 
 /// Maximum number of non-push operations per script
@@ -82,8 +82,8 @@ pub struct Options {
     pub verify_csv: bool,
     /// Verify conditionals are minimally encoded.
     pub verify_minimal_if: bool,
-	/// Enfore a strict limit of 1000 total stack items.
-	pub enforce_stack_limit: bool,
+    /// Enfore a strict limit of 1000 total stack items.
+    pub enforce_stack_limit: bool,
 
     pub experimental: Experimental,
 }
@@ -151,23 +151,19 @@ impl ExecutionResult {
                 ExecCtx::Legacy => {
                     if final_stack.is_empty() {
                         false
-                    } else if !script::read_scriptbool(&final_stack.last().unwrap()) {
-                        false
                     } else {
-                        true
+                        script::read_scriptbool(&final_stack.last().unwrap())
                     }
                 }
                 ExecCtx::SegwitV0 | ExecCtx::Tapscript => {
                     if final_stack.len() != 1 {
                         false
-                    } else if !script::read_scriptbool(&final_stack.last().unwrap()) {
-                        false
                     } else {
-                        true
+                        script::read_scriptbool(&final_stack.last().unwrap())
                     }
                 }
             },
-            final_stack: final_stack,
+            final_stack,
             error: None,
             opcode: None,
         }
@@ -241,7 +237,7 @@ impl Exec {
             }
 
             if let Some((_, Some(ref annex))) = tx.taproot_annex_scriptleaf {
-                if annex.get(0) != Some(&taproot::TAPROOT_ANNEX_PREFIX) {
+                if annex.first() != Some(&taproot::TAPROOT_ANNEX_PREFIX) {
                     return Err(Error::Other("invalid annex: missing prefix"));
                 }
             }
@@ -278,12 +274,12 @@ impl Exec {
         let start_validation_weight = VALIDATION_WEIGHT_OFFSET + witness_size as i64;
 
         let mut ret = Exec {
-            ctx: ctx,
+            ctx,
             result: None,
 
             sighashcache: SighashCache::new(tx.tx.clone()),
-            script: script,
-            instructions: instructions,
+            script,
+            instructions,
             current_position: 0,
             cond_stack: ConditionStack::new(),
             //TODO(stevenroose) does this need to be reversed?
@@ -294,11 +290,11 @@ impl Exec {
             last_codeseparator_pos: None,
             script_code: script,
 
-            opt: opt,
-            tx: tx,
+            opt,
+            tx,
 
             stats: ExecStats {
-                start_validation_weight: start_validation_weight,
+                start_validation_weight,
                 validation_weight: start_validation_weight,
                 ..Default::default()
             },
@@ -319,7 +315,7 @@ impl Exec {
         self.script.len() - self.instructions.as_script().len()
     }
 
-    pub fn remaining_script<'a>(&'a self) -> &'a Script {
+    pub fn remaining_script(&self) -> &Script {
         let pos = self.script_position();
         &self.script[pos..]
     }
@@ -505,12 +501,12 @@ impl Exec {
                 // Some things we do even when we're not executing.
 
                 // Note how OP_RESERVED does not count towards the opcode limit.
-                if self.ctx == ExecCtx::Legacy || self.ctx == ExecCtx::SegwitV0 {
-                    if op.to_u8() > OP_PUSHNUM_16.to_u8() {
-                        self.opcode_count += 1;
-                        if self.opcode_count > MAX_OPS_PER_SCRIPT {
-                            return self.fail(ExecError::OpCount);
-                        }
+                if (self.ctx == ExecCtx::Legacy || self.ctx == ExecCtx::SegwitV0)
+                    && op.to_u8() > OP_PUSHNUM_16.to_u8()
+                {
+                    self.opcode_count += 1;
+                    if self.opcode_count > MAX_OPS_PER_SCRIPT {
+                        return self.fail(ExecError::OpCount);
                     }
                 }
 
@@ -609,10 +605,8 @@ impl Exec {
 
                 //TODO(stevenroose) check this logic
                 //TODO(stevenroose) check if this cast is ok
-                if n & SEQUENCE_LOCKTIME_DISABLE_FLAG as i64 == 0 {
-                    if !self.check_sequence(n) {
-                        return Err(ExecError::UnsatisfiedLocktime);
-                    }
+                if n & SEQUENCE_LOCKTIME_DISABLE_FLAG as i64 == 0 && !self.check_sequence(n) {
+                    return Err(ExecError::UnsatisfiedLocktime);
                 }
             }
             OP_CSV => {} // otherwise nop
@@ -634,10 +628,11 @@ impl Exec {
                         }
                     }
                     // Under segwit v0 only enabled as policy.
-                    if self.opt.verify_minimal_if && self.ctx == ExecCtx::SegwitV0 {
-                        if top.len() > 1 || (top.len() == 1 && top[0] != 1) {
-                            return Err(ExecError::TapscriptMinimalIf);
-                        }
+                    if self.opt.verify_minimal_if
+                        && self.ctx == ExecCtx::SegwitV0
+                        && (top.len() > 1 || (top.len() == 1 && top[0] != 1))
+                    {
+                        return Err(ExecError::TapscriptMinimalIf);
                     }
                     let b = if op == OP_NOTIF {
                         !script::read_scriptbool(&top)
@@ -843,7 +838,7 @@ impl Exec {
                 self.stack.needn(2)?;
                 let x2 = self.stack.popstr().unwrap();
                 let x1 = self.stack.popstr().unwrap();
-                let ret: Vec<u8> = x1.into_iter().chain(x2.into_iter()).collect();
+                let ret: Vec<u8> = x1.into_iter().chain(x2).collect();
                 if ret.len() > MAX_SCRIPT_ELEMENT_SIZE {
                     return Err(ExecError::PushSize);
                 }
@@ -984,27 +979,27 @@ impl Exec {
             OP_RIPEMD160 => {
                 let top = self.stack.popstr()?;
                 self.stack
-                    .pushstr(&ripemd160::Hash::hash(&top[..]).to_byte_array().to_vec());
+                    .pushstr(&ripemd160::Hash::hash(&top[..]).to_byte_array());
             }
             OP_SHA1 => {
                 let top = self.stack.popstr()?;
                 self.stack
-                    .pushstr(&sha1::Hash::hash(&top[..]).to_byte_array().to_vec());
+                    .pushstr(&sha1::Hash::hash(&top[..]).to_byte_array());
             }
             OP_SHA256 => {
                 let top = self.stack.popstr()?;
                 self.stack
-                    .pushstr(&sha256::Hash::hash(&top[..]).to_byte_array().to_vec());
+                    .pushstr(&sha256::Hash::hash(&top[..]).to_byte_array());
             }
             OP_HASH160 => {
                 let top = self.stack.popstr()?;
                 self.stack
-                    .pushstr(&hash160::Hash::hash(&top[..]).to_byte_array().to_vec());
+                    .pushstr(&hash160::Hash::hash(&top[..]).to_byte_array());
             }
             OP_HASH256 => {
                 let top = self.stack.popstr()?;
                 self.stack
-                    .pushstr(&sha256d::Hash::hash(&top[..]).to_byte_array().to_vec());
+                    .pushstr(&sha256d::Hash::hash(&top[..]).to_byte_array());
             }
 
             OP_CODESEPARATOR => {
@@ -1084,8 +1079,8 @@ pub fn convert_to_witness(script: ScriptBuf) -> Result<Vec<Vec<u8>>, Error> {
     let mut stack = vec![];
 
     for instruction in instructions {
-        if instruction.is_err() {
-            return Err(Error::InvalidScript(instruction.unwrap_err()));
+        if let Err(e) = instruction {
+            return Err(Error::InvalidScript(e));
         }
         let instruction = instruction.unwrap();
 
@@ -1149,7 +1144,7 @@ pub fn execute_script_with_witness(script: ScriptBuf, witness: Vec<Vec<u8>>) -> 
     }
     let res = exec.result().unwrap();
 
-    let info =  ExecuteInfo {
+    let info = ExecuteInfo {
         success: res.success,
         error: res.error.clone(),
         last_opcode: res.opcode,
@@ -1169,9 +1164,14 @@ pub fn execute_script_with_witness(script: ScriptBuf, witness: Vec<Vec<u8>>) -> 
     info
 }
 
-pub fn execute_script_with_witness_unlimited_stack(script: ScriptBuf, witness: Vec<Vec<u8>>) -> crate::ExecuteInfo {
-    let mut opts = Options::default();
-    opts.enforce_stack_limit = false;
+pub fn execute_script_with_witness_unlimited_stack(
+    script: ScriptBuf,
+    witness: Vec<Vec<u8>>,
+) -> crate::ExecuteInfo {
+    let opts = Options {
+        enforce_stack_limit: false,
+        ..Default::default()
+    };
 
     let mut exec = Exec::new(
         ExecCtx::Tapscript,
@@ -1190,7 +1190,7 @@ pub fn execute_script_with_witness_unlimited_stack(script: ScriptBuf, witness: V
         script,
         witness,
     )
-        .expect("error creating exec");
+    .expect("error creating exec");
 
     loop {
         if exec.exec_next().is_err() {
@@ -1199,7 +1199,48 @@ pub fn execute_script_with_witness_unlimited_stack(script: ScriptBuf, witness: V
     }
     let res = exec.result().unwrap();
 
-    let info =  ExecuteInfo {
+    let info = ExecuteInfo {
+        success: res.success,
+        error: res.error.clone(),
+        last_opcode: res.opcode,
+        final_stack: FmtStack(exec.stack().clone()),
+        remaining_script: exec.remaining_script().to_asm_string(),
+        stats: exec.stats().clone(),
+    };
+
+    #[cfg(feature = "debug")]
+    {
+        if !res.success {
+            println!("{:8}", info.final_stack);
+            println!("{:?}", info.error);
+        }
+    }
+
+    info
+}
+
+pub fn execute_script_with_witness_and_tx_template(
+    script: ScriptBuf,
+    tx_template: TxTemplate,
+    witness: Vec<Vec<u8>>,
+) -> ExecuteInfo {
+    let mut exec = Exec::new(
+        ExecCtx::Tapscript,
+        Options::default(),
+        tx_template,
+        script,
+        witness,
+    )
+    .expect("error creating exec");
+
+    loop {
+        if exec.exec_next().is_err() {
+            break;
+        }
+    }
+    let res = exec.result().unwrap();
+
+    let info = ExecuteInfo {
         success: res.success,
         error: res.error.clone(),
         last_opcode: res.opcode,
@@ -1239,10 +1280,10 @@ impl std::fmt::Display for ExecuteInfo {
         if let Some(ref error) = self.error {
             writeln!(f, "Error: {:?}", error)?;
         }
-        if self.remaining_script.len() > 0 {
+        if !self.remaining_script.is_empty() {
             writeln!(f, "Remaining Script: {}", self.remaining_script)?;
         }
-        if self.final_stack.len() > 0 {
+        if !self.final_stack.is_empty() {
             match f.width() {
                 None => writeln!(f, "Final Stack: {:4}", self.final_stack)?,
                 Some(width) => {
@@ -1262,7 +1303,16 @@ impl std::fmt::Display for ExecuteInfo {
 pub struct FmtStack(pub Stack);
 impl std::fmt::Display for FmtStack {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let mut iter = self.0.iter_str().enumerate().peekable();
+        let mut iter = self
+            .0
+             .0
+            .iter()
+            .map(|v| match v {
+                StackEntry::Num(v) => scriptint_vec(*v),
+                StackEntry::StrRef(v) => v.borrow().to_vec(),
+            })
+            .enumerate()
+            .peekable();
         write!(f, "\n0:\t\t ")?;
         while let Some((index, item)) = iter.next() {
             write!(f, "0x{:8}", item.as_hex())?;
@@ -1280,6 +1330,10 @@ impl std::fmt::Display for FmtStack {
 impl FmtStack {
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 
     pub fn get(&self, index: usize) -> Vec<u8> {
