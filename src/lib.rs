@@ -1189,16 +1189,6 @@ pub fn get_final_stack(script: ScriptBuf, witness: Vec<Vec<u8>>) -> Vec<Vec<u8>>
             break;
         }
     }
-    let res = exec.result().unwrap();
-    #[cfg(feature = "debug")]
-    {
-        if !res.success {
-            println!("{:8}", FmtStack(exec.stack.clone()));
-            println!("{:?}", res.error);
-        }
-    }
-    assert!(res.success);
-
     exec.stack.to_u8_array()
 }
 
