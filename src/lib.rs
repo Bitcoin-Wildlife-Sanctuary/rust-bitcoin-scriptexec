@@ -1164,6 +1164,44 @@ pub fn execute_script_with_witness(script: ScriptBuf, witness: Vec<Vec<u8>>) -> 
     info
 }
 
+pub fn get_final_stack(script: ScriptBuf, witness: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
+    let mut exec = Exec::new(
+        ExecCtx::Tapscript,
+        Options::default(),
+        TxTemplate {
+            tx: Transaction {
+                version: bitcoin::transaction::Version::TWO,
+                lock_time: bitcoin::locktime::absolute::LockTime::ZERO,
+                input: vec![],
+                output: vec![],
+            },
+            prevouts: vec![],
+            input_idx: 0,
+            taproot_annex_scriptleaf: Some((TapLeafHash::all_zeros(), None)),
+        },
+        script,
+        witness,
+    )
+    .expect("error creating exec");
+
+    loop {
+        if exec.exec_next().is_err() {
+            break;
+        }
+    }
+    let res = exec.result().unwrap();
+    #[cfg(feature = "debug")]
+    {
+        if !res.success {
+            println!("{:8}", FmtStack(exec.stack.clone()));
+            println!("{:?}", res.error);
+        }
+    }
+    assert!(res.success);
+
+    exec.stack.to_u8_array()
+}
+
 pub fn execute_script_with_witness_unlimited_stack(
     script: ScriptBuf,
     witness: Vec<Vec<u8>>,

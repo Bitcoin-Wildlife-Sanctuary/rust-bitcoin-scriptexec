@@ -133,6 +133,17 @@ impl Stack {
             StackEntry::StrRef(v) => v.borrow().to_vec(),
         }
     }
+
+    pub fn to_u8_array(&self) -> Vec<Vec<u8>> {
+        let mut v = vec![];
+        for entry in self.0.iter() {
+            v.push(match entry {
+                StackEntry::Num(v) => scriptint_vec(*v),
+                StackEntry::StrRef(v) => v.borrow().to_vec(),
+            });
+        }
+        v
+    }
 }
 
 impl Default for Stack {
