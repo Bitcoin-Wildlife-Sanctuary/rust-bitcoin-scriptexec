@@ -1189,6 +1189,10 @@ pub fn get_final_stack(script: ScriptBuf, witness: Vec<Vec<u8>>) -> Vec<Vec<u8>>
             break;
         }
     }
+
+    assert!(exec.result.is_some());
+    assert_eq!(exec.result.as_ref().unwrap().error, None);
+
     exec.stack.to_u8_array()
 }
 
