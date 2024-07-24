@@ -1,7 +1,8 @@
 use anyhow::{Error, Result};
 use bitcoin::opcodes::all::{OP_DROP, OP_NOP10, OP_NOP9};
-use bitcoin::script::Instruction;
+use bitcoin::script::{Builder, Instruction, PushBytesBuf};
 use core::fmt::{Debug, Formatter};
+use bitcoin::ScriptBuf;
 use indexmap::IndexMap;
 
 #[derive(Eq, PartialEq, Clone)]
@@ -156,3 +157,18 @@ impl Profiler {
     }
 }
 
+pub fn profiler_start(t: &str) -> ScriptBuf {
+    let mut builder = Builder::new();
+    builder = builder.push_opcode(OP_NOP9);
+    builder = builder.push_slice(PushBytesBuf::try_from(t.as_bytes().to_vec()).unwrap());
+    builder = builder.push_opcode(OP_DROP);
+    builder.into_script()
+}
+
+pub fn profiler_end(t: &str) -> ScriptBuf {
+    let mut builder = Builder::new();
+    builder = builder.push_opcode(OP_NOP10);
+    builder = builder.push_slice(PushBytesBuf::try_from(t.as_bytes().to_vec()).unwrap());
+    builder = builder.push_opcode(OP_DROP);
+    builder.into_script()
+}
