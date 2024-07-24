@@ -32,10 +32,20 @@ use crate::utils::{read_scriptint_size, scriptint_vec};
 pub use data_structures::Stack;
 
 #[cfg(feature = "profiler")]
-use crate::profiler::Profiler;
+use crate::profiler::*;
 
 #[cfg(feature = "profiler")]
 pub mod profiler;
+
+#[cfg(not(feature = "profiler"))]
+pub fn profiler_start(_: &str) -> ScriptBuf {
+    ScriptBuf::new()
+}
+
+#[cfg(not(feature = "profiler"))]
+pub fn profiler_end(_: &str) -> ScriptBuf {
+    ScriptBuf::new()
+}
 
 /// Maximum number of non-push operations per script
 const MAX_OPS_PER_SCRIPT: usize = 201;
