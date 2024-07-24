@@ -32,7 +32,9 @@ use crate::utils::{read_scriptint_size, scriptint_vec};
 pub use data_structures::Stack;
 
 #[cfg(feature = "profiler")]
-use crate::profiler::*;
+use crate::profiler::Profiler;
+#[cfg(feature = "profiler")]
+pub use crate::profiler::{profiler_end, profiler_start};
 
 #[cfg(feature = "profiler")]
 pub mod profiler;

@@ -1,8 +1,8 @@
 use anyhow::{Error, Result};
 use bitcoin::opcodes::all::{OP_DROP, OP_NOP10, OP_NOP9};
 use bitcoin::script::{Builder, Instruction, PushBytesBuf};
-use core::fmt::{Debug, Formatter};
 use bitcoin::ScriptBuf;
+use core::fmt::{Debug, Formatter};
 use indexmap::IndexMap;
 
 #[derive(Eq, PartialEq, Clone)]
