@@ -138,6 +138,21 @@ impl Profiler {
         }
         Ok(())
     }
+
+    pub fn print_stats(&self) {
+        for (k, v) in self.count.iter() {
+            let total: usize = v.iter().sum();
+            let average = (total as f64) / (v.len() as f64);
+
+            println!(
+                "{} occurs {} times, resulting in total {} weight units, on average {} each.",
+                k,
+                v.len(),
+                total,
+                average,
+            )
+        }
+    }
 }
 
 #[allow(non_snake_case)]
