@@ -1,9 +1,6 @@
 extern crate alloc;
-extern crate core;
 
 use alloc::borrow::Cow;
-use core::cmp;
-
 use bitcoin::consensus::Encodable;
 use bitcoin::hashes::{hash160, ripemd160, sha1, sha256, sha256d, Hash};
 use bitcoin::hex::DisplayHex;
@@ -13,6 +10,7 @@ use bitcoin::sighash::SighashCache;
 use bitcoin::taproot::{self, TapLeafHash};
 use bitcoin::transaction::{self, Transaction, TxOut};
 use bitcoin::Sequence;
+use core::cmp;
 
 #[cfg(feature = "serde")]
 use serde;
@@ -32,6 +30,12 @@ mod data_structures;
 use crate::data_structures::{ScriptIntError, StackEntry};
 use crate::utils::{read_scriptint_size, scriptint_vec};
 pub use data_structures::Stack;
+
+#[cfg(feature = "profiler")]
+use crate::profiler::Profiler;
+
+#[cfg(feature = "profiler")]
+pub mod profiler;
 
 /// Maximum number of non-push operations per script
 const MAX_OPS_PER_SCRIPT: usize = 201;
@@ -136,15 +140,18 @@ pub struct TxTemplate {
     pub taproot_annex_scriptleaf: Option<(TapLeafHash, Option<Vec<u8>>)>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ExecutionResult {
     pub success: bool,
     pub error: Option<ExecError>,
     pub opcode: Option<Opcode>,
     pub final_stack: Stack,
+    #[cfg(feature = "profiler")]
+    pub profiler: Option<Profiler>,
 }
 
 impl ExecutionResult {
+    #[cfg(not(feature = "profiler"))]
     fn from_final_stack(ctx: ExecCtx, final_stack: Stack) -> ExecutionResult {
         ExecutionResult {
             success: match ctx {
@@ -166,6 +173,50 @@ impl ExecutionResult {
             final_stack,
             error: None,
             opcode: None,
+            #[cfg(feature = "profiler")]
+            profiler: None,
+        }
+    }
+
+    #[cfg(feature = "profiler")]
+    fn from_final_stack_and_profiler(
+        ctx: ExecCtx,
+        final_stack: Stack,
+        mut profiler: Profiler,
+    ) -> ExecutionResult {
+        let res = profiler.complete();
+        if res.is_err() {
+            eprintln!("{}", res.unwrap_err());
+            return ExecutionResult {
+                success: false,
+                error: Some(ExecError::Debug),
+                opcode: None,
+                final_stack,
+                #[cfg(feature = "profiler")]
+                profiler: None,
+            };
+        }
+        ExecutionResult {
+            success: match ctx {
+                ExecCtx::Legacy => {
+                    if final_stack.is_empty() {
+                        false
+                    } else {
+                        script::read_scriptbool(&final_stack.last().unwrap())
+                    }
+                }
+                ExecCtx::SegwitV0 | ExecCtx::Tapscript => {
+                    if final_stack.len() != 1 {
+                        false
+                    } else {
+                        script::read_scriptbool(&final_stack.last().unwrap())
+                    }
+                }
+            },
+            final_stack,
+            error: None,
+            opcode: None,
+            profiler: Some(profiler),
         }
     }
 }
@@ -211,6 +262,9 @@ pub struct Exec {
 
     // runtime statistics
     stats: ExecStats,
+
+    #[cfg(feature = "profiler")]
+    profiler: Profiler,
 }
 
 impl std::ops::Drop for Exec {
@@ -298,6 +352,9 @@ impl Exec {
                 validation_weight: start_validation_weight,
                 ..Default::default()
             },
+
+            #[cfg(feature = "profiler")]
+            profiler: Profiler::new(),
         };
         ret.update_stats();
         Ok(ret)
@@ -342,6 +399,8 @@ impl Exec {
             error: Some(err),
             opcode: None,
             final_stack: self.stack.clone(),
+            #[cfg(feature = "profiler")]
+            profiler: None,
         };
         self.result = Some(res);
         Err(self.result.as_ref().unwrap())
@@ -353,6 +412,8 @@ impl Exec {
             error: Some(err),
             opcode: Some(op),
             final_stack: self.stack.clone(),
+            #[cfg(feature = "profiler")]
+            profiler: None,
         };
         self.result = Some(res);
         Err(self.result.as_ref().unwrap())
@@ -480,12 +541,33 @@ impl Exec {
         let instruction = match self.instructions.next() {
             Some(Ok(i)) => i,
             None => {
-                let res = ExecutionResult::from_final_stack(self.ctx, self.stack.clone());
-                self.result = Some(res);
-                return Err(self.result.as_ref().unwrap());
+                #[cfg(not(feature = "profiler"))]
+                {
+                    let res = ExecutionResult::from_final_stack(self.ctx, self.stack.clone());
+                    self.result = Some(res);
+                    return Err(self.result.as_ref().unwrap());
+                }
+                #[cfg(feature = "profiler")]
+                {
+                    let res = ExecutionResult::from_final_stack_and_profiler(
+                        self.ctx,
+                        self.stack.clone(),
+                        self.profiler.clone(),
+                    );
+                    self.result = Some(res);
+                    return Err(self.result.as_ref().unwrap());
+                }
             }
             Some(Err(_)) => unreachable!("we checked the script beforehand"),
         };
+
+        #[cfg(feature = "profiler")]
+        {
+            let res = self.profiler.update(&instruction);
+            if res.is_err() {
+                return self.fail(ExecError::Debug);
+            }
+        }
 
         let exec = self.cond_stack.all_true();
         match instruction {
@@ -1151,6 +1233,8 @@ pub fn execute_script_with_witness(script: ScriptBuf, witness: Vec<Vec<u8>>) -> 
         final_stack: FmtStack(exec.stack().clone()),
         remaining_script: exec.remaining_script().to_asm_string(),
         stats: exec.stats().clone(),
+        #[cfg(feature = "profiler")]
+        profiler: exec.profiler.clone(),
     };
 
     #[cfg(feature = "debug")]
@@ -1238,6 +1322,8 @@ pub fn execute_script_with_witness_unlimited_stack(
         final_stack: FmtStack(exec.stack().clone()),
         remaining_script: exec.remaining_script().to_asm_string(),
         stats: exec.stats().clone(),
+        #[cfg(feature = "profiler")]
+        profiler: exec.profiler.clone(),
     };
 
     #[cfg(feature = "debug")]
@@ -1279,6 +1365,8 @@ pub fn execute_script_with_witness_and_tx_template(
         final_stack: FmtStack(exec.stack().clone()),
         remaining_script: exec.remaining_script().to_asm_string(),
         stats: exec.stats().clone(),
+        #[cfg(feature = "profiler")]
+        profiler: exec.profiler.clone(),
     };
 
     #[cfg(feature = "debug")]
@@ -1300,6 +1388,8 @@ pub struct ExecuteInfo {
     pub remaining_script: String,
     pub last_opcode: Option<Opcode>,
     pub stats: ExecStats,
+    #[cfg(feature = "profiler")]
+    pub profiler: Profiler,
 }
 
 impl std::fmt::Display for ExecuteInfo {

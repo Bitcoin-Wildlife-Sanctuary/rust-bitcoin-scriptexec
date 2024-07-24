@@ -12,9 +12,11 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 bitcoin = "0.32.0"
 lazy_static = "1.4.0"
+anyhow = "1.0.86"
 
 # I think we need to mention this for secp256k1-sys to work
 getrandom = { version = "0.2", optional = true }
 
 [features]
 debug = []
+profiler = []
