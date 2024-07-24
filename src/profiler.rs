@@ -99,7 +99,8 @@ impl Profiler {
                         if self.stage == Stage::WaitingForDropToStart {
                             self.stack
                                 .push((self.pending_string.clone(), self.opcode_count));
-                        } else if self.stage == Stage::WaitingForPushbytesToEnd {
+                            self.stage = Stage::Pending;
+                        } else if self.stage == Stage::WaitingForDropToEnd {
                             if let Some((v, count)) = self.stack.last() {
                                 if *v == self.pending_string {
                                     if let Some(counts) = self.count.get_mut(v) {
@@ -109,6 +110,7 @@ impl Profiler {
                                             .insert(v.clone(), vec![self.opcode_count - count]);
                                     }
                                     self.stack.pop().unwrap();
+                                    self.stage = Stage::Pending;
                                 } else {
                                     return Err(Error::msg(
                                         "Ending a profiler unit that hasn't been started.",
