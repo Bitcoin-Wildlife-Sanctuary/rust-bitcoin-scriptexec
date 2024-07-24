@@ -1,9 +1,10 @@
 use anyhow::{Error, Result};
 use bitcoin::opcodes::all::{OP_DROP, OP_NOP10, OP_NOP9};
-use bitcoin::script::Instruction;
+use bitcoin::opcodes::Class::PushBytes;
+use bitcoin::script::{Builder, Instruction, PushBytesBuf};
 use bitcoin::ScriptBuf;
 use core::fmt::{Debug, Formatter};
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 #[derive(Eq, PartialEq, Clone)]
 enum Stage {
@@ -22,7 +23,7 @@ impl Default for Stage {
 
 #[derive(Default, Clone)]
 pub struct Profiler {
-    pub count: HashMap<String, Vec<usize>>,
+    pub count: IndexMap<String, Vec<usize>>,
 
     stage: Stage,
     pending_string: String,
@@ -168,6 +169,27 @@ pub fn AS_FOLLOWS() -> ScriptBuf {
 }
 
 #[allow(non_snake_case)]
+pub fn AS_ABOVE() -> ScriptBuf {
+    ScriptBuf::from_bytes(vec![OP_DROP.to_u8()])
+}
+
+#[allow(non_snake_case)]
 pub fn PROFILER_END() -> ScriptBuf {
     ScriptBuf::from_bytes(vec![OP_NOP10.to_u8()])
+}
+
+pub fn profiler_start(t: &str) -> ScriptBuf {
+    let mut builder = Builder::new();
+    builder = builder.push_opcode(OP_NOP9);
+    builder = builder.push_slice(PushBytesBuf::try_from(t.as_bytes().to_vec()).unwrap());
+    builder = builder.push_opcode(OP_DROP);
+    builder.into_script()
+}
+
+pub fn profiler_end(t: &str) -> ScriptBuf {
+    let mut builder = Builder::new();
+    builder = builder.push_opcode(OP_NOP10);
+    builder = builder.push_slice(PushBytesBuf::try_from(t.as_bytes().to_vec()).unwrap());
+    builder = builder.push_opcode(OP_DROP);
+    builder.into_script()
 }
