@@ -565,6 +565,7 @@ impl Exec {
         {
             let res = self.profiler.update(&instruction);
             if res.is_err() {
+                eprintln!("{}", res.unwrap_err());
                 return self.fail(ExecError::Debug);
             }
         }
