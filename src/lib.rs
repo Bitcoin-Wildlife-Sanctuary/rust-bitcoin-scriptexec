@@ -594,12 +594,12 @@ impl Exec {
             }
             Instruction::Op(op) => {
                 // Some things we do even when we're not executing.
+                self.opcode_count += 1;
 
                 // Note how OP_RESERVED does not count towards the opcode limit.
                 if (self.ctx == ExecCtx::Legacy || self.ctx == ExecCtx::SegwitV0)
                     && op.to_u8() > OP_PUSHNUM_16.to_u8()
                 {
-                    self.opcode_count += 1;
                     if self.opcode_count > MAX_OPS_PER_SCRIPT {
                         return self.fail(ExecError::OpCount);
                     }
