@@ -174,14 +174,3 @@ impl std::fmt::Display for ScriptIntError {
         }
     }
 }
-
-#[cfg(feature = "std")]
-impl std::error::Error for ScriptIntError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        use ScriptIntError::*;
-
-        match *self {
-            NonMinimalPush | NumericOverflow => None,
-        }
-    }
-}

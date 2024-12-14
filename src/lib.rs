@@ -12,9 +12,6 @@ use bitcoin::transaction::{self, Transaction, TxOut};
 use bitcoin::Sequence;
 use core::cmp;
 
-#[cfg(feature = "serde")]
-use serde;
-
 #[macro_use]
 mod macros;
 
@@ -229,7 +226,6 @@ impl ExecutionResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ExecStats {
     /// The highest number of stack items occurred during execution.
     /// This counts both the stack and the altstack.
